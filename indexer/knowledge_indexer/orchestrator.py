@@ -25,18 +25,22 @@ def run_index(head_sha: str | None = None) -> dict:
     caught on the next scheduled pass with zero duplicate work for anything
     already current.
     """
+    logger.info("Fetching article list from %s@%s", GITHUB_REPO, GITHUB_BRANCH)
     articles = fetch_articles(repo_name=GITHUB_REPO, branch=GITHUB_BRANCH)
+    logger.info("Fetched %d articles", len(articles))
+
     indexed_shas = get_indexed_file_shas()
 
     current_paths = {article.path for article in articles}
     stale_paths = set(indexed_shas) - current_paths
 
     reindexed, skipped = [], []
-    for article in articles:
+    for i, article in enumerate(articles, start=1):
         if indexed_shas.get(article.path) == article.sha:
             skipped.append(article.path)
             continue
 
+        logger.info("[%d/%d] Indexing %s", i, len(articles), article.path)
         chunks = chunk_article(article.path, article.content)
         embeddings = embed_texts([c.text for c in chunks])
 

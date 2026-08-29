@@ -210,8 +210,12 @@ class KnowledgeMcpStack(cdk.Stack):
             ),
             # GitHub fetch + chunking + embedding calls run well past the
             # default 3s/128MB Lambda ceiling for anything but a trivial KB.
-            timeout=cdk.Duration.minutes(5),
-            memory_size=1024,
+            # Bumped from 5min/1024MB: a full backfill run (~55 articles,
+            # sequential GitHub calls + per-article ONNX embedding) exceeded
+            # 5 minutes; 900s is Lambda's own hard ceiling. More memory also
+            # buys more vCPU, speeding up the CPU-bound embedding step.
+            timeout=cdk.Duration.minutes(15),
+            memory_size=2048,
             role=role,
             environment={
                 "ENVIRONMENT": self.environment_name,
