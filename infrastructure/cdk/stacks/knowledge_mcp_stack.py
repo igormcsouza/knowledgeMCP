@@ -40,14 +40,21 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
         webhook_secret = self._create_webhook_secret()
+        github_token_secret = self._create_github_token_secret()
 
         indexer_function = self._create_indexer_function(
-            content_table, usage_table, indexer_state_table, webhook_secret
+            content_table,
+            usage_table,
+            indexer_state_table,
+            webhook_secret,
+            github_token_secret,
         )
         self._create_indexer_schedule(indexer_function)
         self._create_indexer_function_url(indexer_function)
 
-        mcp_function = self._create_mcp_server_function(content_table, usage_table)
+        mcp_function = self._create_mcp_server_function(
+            content_table, usage_table, github_token_secret
+        )
         self._create_function_url(mcp_function)
 
     def _create_content_index_table(self) -> aws_dynamodb.Table:
@@ -142,12 +149,30 @@ class KnowledgeMcpStack(cdk.Stack):
             ),
         )
 
+    def _create_github_token_secret(self) -> aws_secretsmanager.Secret:
+        # Personal access token for the GitHub REST API. Unauthenticated
+        # access is capped at 60 req/hour and shared across every AWS Lambda
+        # customer on the same egress IP pool — a full index run exhausts
+        # that near-instantly. Authenticated access gets 5000/hour. Created
+        # with a placeholder value; the real token is set out-of-band via
+        # `aws secretsmanager put-secret-value` (never committed to source).
+        return aws_secretsmanager.Secret(
+            self,
+            "GithubTokenSecret",
+            secret_name=f"knowledge-mcp-{self.environment_name}-github-token",
+            generate_secret_string=aws_secretsmanager.SecretStringGenerator(
+                exclude_punctuation=True,
+                password_length=40,
+            ),
+        )
+
     def _create_indexer_function(
         self,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
         indexer_state_table: aws_dynamodb.Table,
         webhook_secret: aws_secretsmanager.Secret,
+        github_token_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -160,6 +185,7 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table.grant_read_write_data(role)
         indexer_state_table.grant_read_write_data(role)
         webhook_secret.grant_read(role)
+        github_token_secret.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -191,6 +217,7 @@ class KnowledgeMcpStack(cdk.Stack):
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
                 "GITHUB_WEBHOOK_SECRET_ARN": webhook_secret.secret_arn,
+                "GITHUB_TOKEN_SECRET_ARN": github_token_secret.secret_arn,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.
@@ -235,6 +262,7 @@ class KnowledgeMcpStack(cdk.Stack):
         self,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
+        github_token_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -246,6 +274,9 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_data(role)
         # log_query_feedback (PLAN.md 3.8) writes back to usage tracking.
         usage_table.grant_read_write_data(role)
+        # get_article_history / list_related_concepts's edit-count fallback
+        # call the GitHub API directly (PLAN.md 3.9).
+        github_token_secret.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -277,6 +308,7 @@ class KnowledgeMcpStack(cdk.Stack):
             environment={
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
+                "GITHUB_TOKEN_SECRET_ARN": github_token_secret.secret_arn,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.

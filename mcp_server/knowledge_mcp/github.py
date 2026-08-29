@@ -1,6 +1,6 @@
 import os
 
-from github import Github
+from knowledge_mcp.github_client import get_github_client
 
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "igormcsouza/knowledge-base")
 
@@ -8,7 +8,7 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO", "igormcsouza/knowledge-base")
 def get_file_history(article_path: str, limit: int = 20) -> list[dict]:
     """Git log for one file — how a concept/fix evolved over time
     (PLAN.md 3.9)."""
-    client = Github()
+    client = get_github_client()
     repo = client.get_repo(GITHUB_REPO)
     commits = repo.get_commits(path=article_path)
     history = []
@@ -28,6 +28,6 @@ def get_file_history(article_path: str, limit: int = 20) -> list[dict]:
 def count_commits(article_path: str) -> int:
     """Used as the edit-count-depth proxy for weak-concept detection when
     the usage table's own edit_count hasn't accumulated history yet."""
-    client = Github()
+    client = get_github_client()
     repo = client.get_repo(GITHUB_REPO)
     return repo.get_commits(path=article_path).totalCount

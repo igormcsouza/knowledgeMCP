@@ -1,9 +1,8 @@
 from dataclasses import dataclass, field
 
 import yaml
-from github import Github
-
 from knowledge_indexer.config import DOCS_PREFIXES, GITHUB_BRANCH, GITHUB_REPO
+from knowledge_indexer.github_client import get_github_client
 
 
 @dataclass
@@ -69,7 +68,7 @@ def fetch_articles(
     this repo's mkdocs.yml has no explicit `nav:` (Material auto-generates
     nav from docs/ layout, not from an awesome-pages ordering file).
     """
-    client = Github()
+    client = get_github_client()
     repo = client.get_repo(repo_name)
     tree = repo.get_git_tree(branch, recursive=True)
 
