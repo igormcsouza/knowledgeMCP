@@ -173,14 +173,15 @@ class KnowledgeMcpStack(cdk.Stack):
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
 
-        function = aws_lambda.Function(
+        function = aws_lambda.DockerImageFunction(
             self,
             "IndexerFunction",
-            runtime=aws_lambda.Runtime.PYTHON_3_12,
-            code=aws_lambda.Code.from_docker_build(
-                path=repo_root, file="indexer/Dockerfile"
+            # Real container-image Lambda (10GB unzipped limit), not
+            # Code.from_docker_build's zip packaging (250MB limit) — fastembed's
+            # onnxruntime dependency doesn't fit under the zip ceiling.
+            code=aws_lambda.DockerImageCode.from_image_asset(
+                directory=repo_root, file="indexer/Dockerfile"
             ),
-            handler="index.handler",
             # GitHub fetch + chunking + embedding calls run well past the
             # default 3s/128MB Lambda ceiling for anything but a trivial KB.
             timeout=cdk.Duration.minutes(5),
@@ -254,14 +255,15 @@ class KnowledgeMcpStack(cdk.Stack):
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
 
-        function = aws_lambda.Function(
+        function = aws_lambda.DockerImageFunction(
             self,
             "McpServerFunction",
-            runtime=aws_lambda.Runtime.PYTHON_3_12,
-            code=aws_lambda.Code.from_docker_build(
-                path=repo_root, file="mcp_server/Dockerfile"
+            # Real container-image Lambda (10GB unzipped limit), not
+            # Code.from_docker_build's zip packaging (250MB limit) — fastembed's
+            # onnxruntime dependency doesn't fit under the zip ceiling.
+            code=aws_lambda.DockerImageCode.from_image_asset(
+                directory=repo_root, file="mcp_server/Dockerfile"
             ),
-            handler="index.handler",
             # Bumped from 30s/512MB: the local fastembed/ONNX model
             # (downloaded to /tmp on cold start, then cached across warm
             # invocations) needs more headroom than a Bedrock API call did.
