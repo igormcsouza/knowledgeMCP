@@ -1,0 +1,20 @@
+[project]
+name = "knowledge-mcp-cdk"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-cdk-lib>=2.150.0",
+    "constructs>=10.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.3.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
