@@ -9,6 +9,7 @@ dependencies = [
     "starlette==0.41.3",
     "PyGithub==2.3.0",
     "langgraph==0.2.34",
+    "fastembed==0.3.6",
 ]
 
 [dependency-groups]

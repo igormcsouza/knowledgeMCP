@@ -26,13 +26,11 @@ class KnowledgeMcpStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         environment_name: str = "dev",
-        bedrock_region: str = "us-east-1",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.environment_name = environment_name
-        self.bedrock_region = bedrock_region
 
         if environment_name.startswith("pr-"):
             cdk.Tags.of(self).add("Ephemeral", "true")
@@ -162,12 +160,6 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table.grant_read_write_data(role)
         indexer_state_table.grant_read_write_data(role)
         webhook_secret.grant_read(role)
-        role.add_to_policy(
-            aws_iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"],
-                resources=["*"],
-            )
-        )
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -196,7 +188,6 @@ class KnowledgeMcpStack(cdk.Stack):
             role=role,
             environment={
                 "ENVIRONMENT": self.environment_name,
-                "BEDROCK_REGION": self.bedrock_region,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
                 "GITHUB_WEBHOOK_SECRET_ARN": webhook_secret.secret_arn,
             },
@@ -250,12 +241,6 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_data(role)
         # log_query_feedback (PLAN.md 3.8) writes back to usage tracking.
         usage_table.grant_read_write_data(role)
-        role.add_to_policy(
-            aws_iam.PolicyStatement(
-                actions=["bedrock:InvokeModel"],
-                resources=["*"],
-            )
-        )
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -277,12 +262,14 @@ class KnowledgeMcpStack(cdk.Stack):
                 path=repo_root, file="mcp_server/Dockerfile"
             ),
             handler="index.handler",
-            timeout=cdk.Duration.seconds(30),
-            memory_size=512,
+            # Bumped from 30s/512MB: the local fastembed/ONNX model
+            # (downloaded to /tmp on cold start, then cached across warm
+            # invocations) needs more headroom than a Bedrock API call did.
+            timeout=cdk.Duration.seconds(60),
+            memory_size=1024,
             role=role,
             environment={
                 "ENVIRONMENT": self.environment_name,
-                "BEDROCK_REGION": self.bedrock_region,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
             },
             log_group=log_group,

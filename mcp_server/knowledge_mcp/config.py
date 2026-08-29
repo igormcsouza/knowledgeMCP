@@ -1,8 +1,8 @@
 import os
 
-BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "us-east-1")
-EMBEDDING_MODEL_ID = os.environ.get(
-    "EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"
+# Local fastembed/ONNX model, not Bedrock — see embeddings.py.
+EMBEDDING_MODEL_NAME = os.environ.get(
+    "EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5"
 )
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 

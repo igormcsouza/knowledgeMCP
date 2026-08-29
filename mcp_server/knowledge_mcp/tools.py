@@ -3,7 +3,7 @@ from collections import defaultdict
 from mcp.server.fastmcp import FastMCP
 
 from knowledge_mcp import dynamodb
-from knowledge_mcp.bedrock import embed_query
+from knowledge_mcp.embeddings import embed_query
 from knowledge_mcp.github import get_file_history
 from knowledge_mcp.review_graph import suggest_review_queue as _suggest_review_queue
 

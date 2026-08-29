@@ -1,22 +1,23 @@
-import boto3
-from langchain_aws import BedrockEmbeddings
+from fastembed import TextEmbedding
 
-from knowledge_indexer.config import BEDROCK_REGION, EMBEDDING_MODEL_ID
+from knowledge_indexer.config import EMBEDDING_MODEL_NAME
 
-_client = None
+_model: TextEmbedding | None = None
 
 
-def _get_client() -> BedrockEmbeddings:
-    global _client
-    if _client is None:
-        bedrock_runtime = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
-        _client = BedrockEmbeddings(
-            client=bedrock_runtime, model_id=EMBEDDING_MODEL_ID
-        )
-    return _client
+def _get_model() -> TextEmbedding:
+    # Local ONNX model, not Bedrock: this account's Bedrock embedding
+    # on-demand quota is 0 across every model and region pending an AWS
+    # support ticket, so embeddings run in-process instead. Must stay in
+    # sync with mcp_server's EMBEDDING_MODEL_NAME — cosine similarity is
+    # meaningless across two different embedding spaces.
+    global _model
+    if _model is None:
+        _model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME, cache_dir="/tmp/fastembed_cache")
+    return _model
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    return _get_client().embed_documents(texts)
+    return [vector.tolist() for vector in _get_model().embed(texts)]
