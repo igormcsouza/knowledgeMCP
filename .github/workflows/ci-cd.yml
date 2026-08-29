@@ -1,0 +1,126 @@
+name: Test and Deploy
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+env:
+  AWS_REGION: sa-east-1
+
+jobs:
+  test:
+    name: Test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [indexer, mcp_server, infrastructure/cdk]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+
+      - name: Install Node.js for CDK CLI
+        if: matrix.package == 'infrastructure/cdk'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK CLI
+        if: matrix.package == 'infrastructure/cdk'
+        run: npm install -g aws-cdk
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.package }}
+        run: uv sync --frozen --group dev
+
+      - name: Ruff lint
+        if: matrix.package != 'infrastructure/cdk'
+        working-directory: ${{ matrix.package }}
+        run: uv run ruff check .
+
+      - name: Run tests
+        working-directory: ${{ matrix.package }}
+        run: uv run pytest -q
+
+      - name: CDK synth (validate stack)
+        if: matrix.package == 'infrastructure/cdk'
+        working-directory: infrastructure/cdk
+        run: cdk synth
+        env:
+          ENVIRONMENT: dev
+          AWS_ACCOUNT_ID: "123456789012"
+
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "latest"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Node.js for CDK CLI
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure/cdk
+        run: uv sync --frozen
+
+      - name: Bootstrap CDK environment
+        working-directory: infrastructure/cdk
+        run: cdk bootstrap
+        env:
+          ENVIRONMENT: prod
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Deploy CDK stack
+        working-directory: infrastructure/cdk
+        run: cdk deploy --require-approval never --outputs-file outputs.json
+        env:
+          ENVIRONMENT: prod
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Show deployed endpoints
+        working-directory: infrastructure/cdk
+        run: cat outputs.json
