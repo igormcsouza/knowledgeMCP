@@ -1,6 +1,5 @@
 from mcp.server.fastmcp import FastMCP
 
-from knowledge_mcp.auth import BearerAuthMiddleware
 from knowledge_mcp.tools import register_tools
 
 # stateless_http=True: this Lambda is a request/response server, never holds
@@ -13,6 +12,8 @@ register_tools(mcp)
 
 
 def build_asgi_app():
-    app = mcp.streamable_http_app()
-    app.add_middleware(BearerAuthMiddleware)
-    return app
+    # No auth middleware: the claude.ai web/desktop custom-connector UI only
+    # supports OAuth, not a static bearer header, and this is a personal,
+    # read-mostly KB behind an unguessable Function URL. See auth.py if
+    # OAuth or bearer-header auth (e.g. Claude Code CLI) is added later.
+    return mcp.streamable_http_app()

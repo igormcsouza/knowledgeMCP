@@ -41,7 +41,6 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table = self._create_content_index_table()
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
-        bearer_secret = self._create_bearer_secret()
         webhook_secret = self._create_webhook_secret()
 
         indexer_function = self._create_indexer_function(
@@ -50,9 +49,7 @@ class KnowledgeMcpStack(cdk.Stack):
         self._create_indexer_schedule(indexer_function)
         self._create_indexer_function_url(indexer_function)
 
-        mcp_function = self._create_mcp_server_function(
-            content_table, usage_table, bearer_secret
-        )
+        mcp_function = self._create_mcp_server_function(content_table, usage_table)
         self._create_function_url(mcp_function)
 
     def _create_content_index_table(self) -> aws_dynamodb.Table:
@@ -133,19 +130,6 @@ class KnowledgeMcpStack(cdk.Stack):
         cdk.Tags.of(table).add("Environment", self.environment_name)
         cdk.Tags.of(table).add("Application", "knowledge-mcp")
         return table
-
-    def _create_bearer_secret(self) -> aws_secretsmanager.Secret:
-        # Static bearer token for the MCP server's auth middleware (PLAN.md
-        # 2.3). Generated once per environment; rotate manually if leaked.
-        return aws_secretsmanager.Secret(
-            self,
-            "McpBearerTokenSecret",
-            secret_name=f"knowledge-mcp-{self.environment_name}-bearer-token",
-            generate_secret_string=aws_secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True,
-                password_length=40,
-            ),
-        )
 
     def _create_webhook_secret(self) -> aws_secretsmanager.Secret:
         # HMAC secret shared with the GitHub webhook config, used to verify
@@ -255,7 +239,6 @@ class KnowledgeMcpStack(cdk.Stack):
         self,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
-        bearer_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -267,7 +250,6 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_data(role)
         # log_query_feedback (PLAN.md 3.8) writes back to usage tracking.
         usage_table.grant_read_write_data(role)
-        bearer_secret.grant_read(role)
         role.add_to_policy(
             aws_iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
@@ -302,7 +284,6 @@ class KnowledgeMcpStack(cdk.Stack):
                 "ENVIRONMENT": self.environment_name,
                 "BEDROCK_REGION": self.bedrock_region,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
-                "BEARER_TOKEN_SECRET_ARN": bearer_secret.secret_arn,
             },
             log_group=log_group,
         )
