@@ -1,5 +1,6 @@
 # Build context is the repo root (see infrastructure/cdk's
-# Code.from_docker_build call), matching the mcp_server/ file: prefix below.
+# DockerImageCode.from_image_asset call), matching the mcp_server/ file:
+# prefix below.
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
@@ -18,7 +19,10 @@ RUN mkdir -p packages && \
 
 FROM public.ecr.aws/lambda/python:3.12
 
-WORKDIR /asset
+# Container-image Lambda's runtime interface client resolves the handler
+# under LAMBDA_TASK_ROOT, which defaults to /var/task — not /asset (that
+# was only relevant to the old zip-based Code.from_docker_build packaging).
+WORKDIR ${LAMBDA_TASK_ROOT}
 
 COPY --from=builder /build/packages .
 COPY mcp_server/ .
