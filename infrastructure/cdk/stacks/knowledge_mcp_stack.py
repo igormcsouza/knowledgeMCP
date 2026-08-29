@@ -191,6 +191,10 @@ class KnowledgeMcpStack(cdk.Stack):
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
                 "GITHUB_WEBHOOK_SECRET_ARN": webhook_secret.secret_arn,
+                # fastembed's HF download accelerator (hf_xet) writes its own
+                # cache/log under $HOME/.cache regardless of the cache_dir we
+                # pass explicitly — only /tmp is writable in Lambda.
+                "HOME": "/tmp",
             },
             log_group=log_group,
         )
@@ -273,6 +277,10 @@ class KnowledgeMcpStack(cdk.Stack):
             environment={
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
+                # fastembed's HF download accelerator (hf_xet) writes its own
+                # cache/log under $HOME/.cache regardless of the cache_dir we
+                # pass explicitly — only /tmp is writable in Lambda.
+                "HOME": "/tmp",
             },
             log_group=log_group,
         )
