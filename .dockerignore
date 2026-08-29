@@ -1,0 +1,7 @@
+infrastructure/cdk/cdk.out/
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+.git/
