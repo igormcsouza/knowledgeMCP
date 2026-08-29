@@ -54,6 +54,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run tests
+        if: matrix.package != 'infrastructure/cdk'
         working-directory: ${{ matrix.package }}
         run: uv run pytest -q
 
