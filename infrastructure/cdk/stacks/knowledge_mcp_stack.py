@@ -42,11 +42,13 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
         bearer_secret = self._create_bearer_secret()
+        webhook_secret = self._create_webhook_secret()
 
         indexer_function = self._create_indexer_function(
-            content_table, usage_table, indexer_state_table
+            content_table, usage_table, indexer_state_table, webhook_secret
         )
         self._create_indexer_schedule(indexer_function)
+        self._create_indexer_function_url(indexer_function)
 
         mcp_function = self._create_mcp_server_function(
             content_table, usage_table, bearer_secret
@@ -145,11 +147,25 @@ class KnowledgeMcpStack(cdk.Stack):
             ),
         )
 
+    def _create_webhook_secret(self) -> aws_secretsmanager.Secret:
+        # HMAC secret shared with the GitHub webhook config, used to verify
+        # X-Hub-Signature-256 on incoming push events (PLAN.md 1.4).
+        return aws_secretsmanager.Secret(
+            self,
+            "GithubWebhookSecret",
+            secret_name=f"knowledge-mcp-{self.environment_name}-github-webhook-secret",
+            generate_secret_string=aws_secretsmanager.SecretStringGenerator(
+                exclude_punctuation=True,
+                password_length=40,
+            ),
+        )
+
     def _create_indexer_function(
         self,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
         indexer_state_table: aws_dynamodb.Table,
+        webhook_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -161,6 +177,7 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_write_data(role)
         usage_table.grant_read_write_data(role)
         indexer_state_table.grant_read_write_data(role)
+        webhook_secret.grant_read(role)
         role.add_to_policy(
             aws_iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
@@ -197,6 +214,7 @@ class KnowledgeMcpStack(cdk.Stack):
                 "ENVIRONMENT": self.environment_name,
                 "BEDROCK_REGION": self.bedrock_region,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
+                "GITHUB_WEBHOOK_SECRET_ARN": webhook_secret.secret_arn,
             },
             log_group=log_group,
         )
@@ -204,6 +222,23 @@ class KnowledgeMcpStack(cdk.Stack):
         cdk.Tags.of(function).add("Environment", self.environment_name)
         cdk.Tags.of(function).add("Application", "knowledge-mcp")
         return function
+
+    def _create_indexer_function_url(
+        self, indexer_function: aws_lambda.Function
+    ) -> None:
+        # Public endpoint the GitHub webhook posts push events to. Auth is
+        # the HMAC signature (X-Hub-Signature-256), not IAM — GitHub can't
+        # sign SigV4 requests.
+        function_url = indexer_function.add_function_url(
+            auth_type=aws_lambda.FunctionUrlAuthType.NONE,
+        )
+        cdk.CfnOutput(
+            self,
+            "IndexerWebhookUrl",
+            value=function_url.url,
+            description="GitHub webhook target (Settings -> Webhooks -> Payload URL)",
+            export_name=f"knowledge-mcp-indexer-webhook-url-{self.environment_name}",
+        )
 
     def _create_indexer_schedule(self, indexer_function: aws_lambda.Function) -> None:
         # Daily EventBridge rule as a fallback safety net alongside the

@@ -1,5 +1,5 @@
 from mangum import Mangum
 
-from knowledge_mcp.app import mcp
+from knowledge_mcp.app import build_asgi_app
 
-handler = Mangum(mcp.streamable_http_app())
+handler = Mangum(build_asgi_app())
