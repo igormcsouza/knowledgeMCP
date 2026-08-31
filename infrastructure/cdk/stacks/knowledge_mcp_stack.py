@@ -1,3 +1,4 @@
+import json
 import os
 
 import aws_cdk as cdk
@@ -10,7 +11,30 @@ from aws_cdk import (
     aws_logs,
     aws_secretsmanager,
 )
+from aws_cdk import (
+    custom_resources as cr,
+)
 from constructs import Construct
+
+# CDK bootstrap's shared image asset repo has no lifecycle policy by default,
+# so every `cdk deploy` leaves its pushed image behind forever (issue #2 —
+# 84 images / ~21.4GB observed in prod before this was added). Keep only the
+# most recent 2 tagged images: one each for the indexer and mcp_server
+# Lambdas, which both publish to this same bootstrap-owned repo.
+ECR_LIFECYCLE_POLICY = {
+    "rules": [
+        {
+            "rulePriority": 1,
+            "description": "Keep only the 2 most recent images (indexer + mcp_server current)",
+            "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 2,
+            },
+            "action": {"type": "expire"},
+        }
+    ]
+}
 
 
 class KnowledgeMcpStack(cdk.Stack):
@@ -56,6 +80,8 @@ class KnowledgeMcpStack(cdk.Stack):
             content_table, usage_table, github_token_secret
         )
         self._create_function_url(mcp_function)
+
+        self._create_ecr_lifecycle_policy()
 
     def _create_content_index_table(self) -> aws_dynamodb.Table:
         # PK: article_path groups chunks per article; SK: chunk_id lets a
@@ -324,6 +350,36 @@ class KnowledgeMcpStack(cdk.Stack):
         cdk.Tags.of(function).add("Environment", self.environment_name)
         cdk.Tags.of(function).add("Application", "knowledge-mcp")
         return function
+
+    def _create_ecr_lifecycle_policy(self) -> None:
+        # The bootstrap repo is created implicitly by `cdk bootstrap`, not by
+        # this stack, so it can only be reached as an IRepository reference
+        # (which doesn't support add_lifecycle_rule) — call the API directly.
+        bootstrap_repo_name = (
+            f"cdk-hnb659fds-container-assets-{self.account}-{self.region}"
+        )
+        sdk_call = cr.AwsSdkCall(
+            service="ECR",
+            action="putLifecyclePolicy",
+            parameters={
+                "repositoryName": bootstrap_repo_name,
+                "lifecyclePolicyText": json.dumps(ECR_LIFECYCLE_POLICY),
+            },
+            physical_resource_id=cr.PhysicalResourceId.of(
+                f"{bootstrap_repo_name}-lifecycle-policy"
+            ),
+        )
+        cr.AwsCustomResource(
+            self,
+            "EcrLifecyclePolicy",
+            on_create=sdk_call,
+            on_update=sdk_call,
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=[
+                    f"arn:aws:ecr:{self.region}:{self.account}:repository/{bootstrap_repo_name}"
+                ]
+            ),
+        )
 
     def _create_function_url(self, mcp_function: aws_lambda.Function) -> None:
         # Function URL, not API Gateway: simplest fronting for a personal MCP
