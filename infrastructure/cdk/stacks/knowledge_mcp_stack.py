@@ -43,7 +43,6 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
         webhook_param = self._create_webhook_param()
-        github_token_param = self._create_github_token_param()
 
         indexer_function = self._create_indexer_function(
             image_repo,
@@ -51,13 +50,12 @@ class KnowledgeMcpStack(cdk.Stack):
             usage_table,
             indexer_state_table,
             webhook_param,
-            github_token_param,
         )
         self._create_indexer_schedule(indexer_function)
         self._create_indexer_function_url(indexer_function)
 
         mcp_function = self._create_mcp_server_function(
-            image_repo, content_table, usage_table, github_token_param
+            image_repo, content_table, usage_table
         )
         self._create_function_url(mcp_function)
 
@@ -187,23 +185,6 @@ class KnowledgeMcpStack(cdk.Stack):
             string_value="placeholder-rotate-me",
         )
 
-    def _create_github_token_param(self) -> aws_ssm.StringParameter:
-        # Personal access token for the GitHub REST API. Unauthenticated
-        # access is capped at 60 req/hour and shared across every AWS Lambda
-        # customer on the same egress IP pool — a full index run exhausts
-        # that near-instantly. Authenticated access gets 5000/hour. Created
-        # with a placeholder value; the real token is set out-of-band via
-        # `aws ssm put-parameter --type SecureString --overwrite` (never
-        # committed to source; CloudFormation can't create SecureString
-        # params directly, see issue #3).
-        return aws_ssm.StringParameter(
-            self,
-            "GithubTokenParam",
-            parameter_name=f"/knowledge-mcp/{self.environment_name}/github-token",
-            tier=aws_ssm.ParameterTier.STANDARD,
-            string_value="placeholder-rotate-me",
-        )
-
     def _create_indexer_function(
         self,
         image_repo: aws_ecr.Repository,
@@ -211,7 +192,6 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table: aws_dynamodb.Table,
         indexer_state_table: aws_dynamodb.Table,
         webhook_param: aws_ssm.StringParameter,
-        github_token_param: aws_ssm.StringParameter,
     ) -> aws_lambda.Function:
         role = aws_iam.Role(
             self,
@@ -222,7 +202,6 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table.grant_read_write_data(role)
         indexer_state_table.grant_read_write_data(role)
         webhook_param.grant_read(role)
-        github_token_param.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -259,7 +238,6 @@ class KnowledgeMcpStack(cdk.Stack):
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
                 "GITHUB_WEBHOOK_SECRET_PARAM": webhook_param.parameter_name,
-                "GITHUB_TOKEN_SECRET_PARAM": github_token_param.parameter_name,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.
@@ -305,7 +283,6 @@ class KnowledgeMcpStack(cdk.Stack):
         image_repo: aws_ecr.Repository,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
-        github_token_param: aws_ssm.StringParameter,
     ) -> aws_lambda.Function:
         role = aws_iam.Role(
             self,
@@ -315,9 +292,6 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_data(role)
         # log_query_feedback (PLAN.md 3.8) writes back to usage tracking.
         usage_table.grant_read_write_data(role)
-        # get_article_history / list_related_concepts's edit-count fallback
-        # call the GitHub API directly (PLAN.md 3.9).
-        github_token_param.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -350,7 +324,6 @@ class KnowledgeMcpStack(cdk.Stack):
             environment={
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
-                "GITHUB_TOKEN_SECRET_PARAM": github_token_param.parameter_name,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.
