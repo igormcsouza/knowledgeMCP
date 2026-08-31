@@ -81,6 +81,16 @@ class KnowledgeMcpStack(cdk.Stack):
         )
         self._create_function_url(mcp_function)
 
+        # This shared bootstrap ECR repo is used by 9 other CDK apps in this
+        # account (Bookloud, Cashlytics, Backecast, etc.) — a lifecycle
+        # policy scoped by recency alone can't tell "orphaned" from "another
+        # project's active image," risking deleting a tag another app's
+        # Lambda still points at. Being reverted (see issue #2 follow-up for
+        # a dedicated per-project repo instead); this deploy only wires up
+        # an on_delete handler so the *next* deploy (which drops this call)
+        # can actually clean up the policy — CloudFormation's delete event
+        # replays the properties from the last successful deploy, so the
+        # handler has to exist before the resource is removed.
         self._create_ecr_lifecycle_policy()
 
     def _create_content_index_table(self) -> aws_dynamodb.Table:
@@ -369,11 +379,20 @@ class KnowledgeMcpStack(cdk.Stack):
                 f"{bootstrap_repo_name}-lifecycle-policy"
             ),
         )
+        delete_call = cr.AwsSdkCall(
+            service="ECR",
+            action="deleteLifecyclePolicy",
+            parameters={"repositoryName": bootstrap_repo_name},
+            physical_resource_id=cr.PhysicalResourceId.of(
+                f"{bootstrap_repo_name}-lifecycle-policy"
+            ),
+        )
         cr.AwsCustomResource(
             self,
             "EcrLifecyclePolicy",
             on_create=sdk_call,
             on_update=sdk_call,
+            on_delete=delete_call,
             policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
                 resources=[
                     f"arn:aws:ecr:{self.region}:{self.account}:repository/{bootstrap_repo_name}"
