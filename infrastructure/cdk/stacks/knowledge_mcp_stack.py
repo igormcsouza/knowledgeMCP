@@ -3,6 +3,7 @@ import os
 import aws_cdk as cdk
 from aws_cdk import (
     aws_dynamodb,
+    aws_ecr,
     aws_events,
     aws_events_targets,
     aws_iam,
@@ -36,6 +37,8 @@ class KnowledgeMcpStack(cdk.Stack):
             cdk.Tags.of(self).add("Ephemeral", "true")
             cdk.Tags.of(self).add("PRNumber", environment_name.removeprefix("pr-"))
 
+        self._create_image_repository()
+
         content_table = self._create_content_index_table()
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
@@ -56,6 +59,38 @@ class KnowledgeMcpStack(cdk.Stack):
             content_table, usage_table, github_token_secret
         )
         self._create_function_url(mcp_function)
+
+    def _create_image_repository(self) -> aws_ecr.Repository:
+        # Dedicated repo for the indexer/mcp_server Lambda images, replacing
+        # the shared CDK-bootstrap asset repo — that repo is used by every
+        # other CDK app in this account, so a lifecycle policy scoped to it
+        # risked expiring another project's in-use image (issue #2). This
+        # repo is app-owned and only knowledgeMCP publishes to it, so it can
+        # safely self-manage its own retention.
+        repo = aws_ecr.Repository(
+            self,
+            "ImageRepository",
+            repository_name=f"knowledge-mcp-{self.environment_name}",
+            lifecycle_rules=[
+                aws_ecr.LifecycleRule(
+                    description="Expire untagged images after 3 days",
+                    tag_status=aws_ecr.TagStatus.UNTAGGED,
+                    max_image_age=cdk.Duration.days(3),
+                ),
+                aws_ecr.LifecycleRule(
+                    description="Keep only the 5 most recent images",
+                    tag_status=aws_ecr.TagStatus.ANY,
+                    max_image_count=5,
+                ),
+            ],
+            # A disposable build-artifact cache, not data — ephemeral pr-*
+            # environments should clean this up fully on stack teardown.
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+            empty_on_delete=True,
+        )
+        cdk.Tags.of(repo).add("Environment", self.environment_name)
+        cdk.Tags.of(repo).add("Application", "knowledge-mcp")
+        return repo
 
     def _create_content_index_table(self) -> aws_dynamodb.Table:
         # PK: article_path groups chunks per article; SK: chunk_id lets a
