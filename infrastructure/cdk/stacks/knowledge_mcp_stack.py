@@ -37,7 +37,7 @@ class KnowledgeMcpStack(cdk.Stack):
             cdk.Tags.of(self).add("Ephemeral", "true")
             cdk.Tags.of(self).add("PRNumber", environment_name.removeprefix("pr-"))
 
-        self._create_image_repository()
+        image_repo = self._create_image_repository()
 
         content_table = self._create_content_index_table()
         usage_table = self._create_usage_tracking_table()
@@ -46,6 +46,7 @@ class KnowledgeMcpStack(cdk.Stack):
         github_token_secret = self._create_github_token_secret()
 
         indexer_function = self._create_indexer_function(
+            image_repo,
             content_table,
             usage_table,
             indexer_state_table,
@@ -56,7 +57,7 @@ class KnowledgeMcpStack(cdk.Stack):
         self._create_indexer_function_url(indexer_function)
 
         mcp_function = self._create_mcp_server_function(
-            content_table, usage_table, github_token_secret
+            image_repo, content_table, usage_table, github_token_secret
         )
         self._create_function_url(mcp_function)
 
@@ -203,14 +204,13 @@ class KnowledgeMcpStack(cdk.Stack):
 
     def _create_indexer_function(
         self,
+        image_repo: aws_ecr.Repository,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
         indexer_state_table: aws_dynamodb.Table,
         webhook_secret: aws_secretsmanager.Secret,
         github_token_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
-        repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-
         role = aws_iam.Role(
             self,
             "IndexerLambdaRole",
@@ -240,8 +240,9 @@ class KnowledgeMcpStack(cdk.Stack):
             # Real container-image Lambda (10GB unzipped limit), not
             # Code.from_docker_build's zip packaging (250MB limit) — fastembed's
             # onnxruntime dependency doesn't fit under the zip ceiling.
-            code=aws_lambda.DockerImageCode.from_image_asset(
-                directory=repo_root, file="indexer/Dockerfile"
+            code=aws_lambda.DockerImageCode.from_ecr(
+                repository=image_repo,
+                tag_or_digest=os.environ.get("INDEXER_IMAGE_TAG", "latest"),
             ),
             # GitHub fetch + chunking + embedding calls run well past the
             # default 3s/128MB Lambda ceiling for anything but a trivial KB.
@@ -299,12 +300,11 @@ class KnowledgeMcpStack(cdk.Stack):
 
     def _create_mcp_server_function(
         self,
+        image_repo: aws_ecr.Repository,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
         github_token_secret: aws_secretsmanager.Secret,
     ) -> aws_lambda.Function:
-        repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-
         role = aws_iam.Role(
             self,
             "McpServerLambdaRole",
@@ -335,8 +335,9 @@ class KnowledgeMcpStack(cdk.Stack):
             # Real container-image Lambda (10GB unzipped limit), not
             # Code.from_docker_build's zip packaging (250MB limit) — fastembed's
             # onnxruntime dependency doesn't fit under the zip ceiling.
-            code=aws_lambda.DockerImageCode.from_image_asset(
-                directory=repo_root, file="mcp_server/Dockerfile"
+            code=aws_lambda.DockerImageCode.from_ecr(
+                repository=image_repo,
+                tag_or_digest=os.environ.get("MCP_SERVER_IMAGE_TAG", "latest"),
             ),
             # Bumped from 30s/512MB: the local fastembed/ONNX model
             # (downloaded to /tmp on cold start, then cached across warm

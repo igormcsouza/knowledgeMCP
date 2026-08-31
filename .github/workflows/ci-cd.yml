@@ -114,6 +114,18 @@ jobs:
           ENVIRONMENT: prod
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
+      - name: Build and push Lambda images
+        run: |
+          set -euo pipefail
+          registry="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          repo="knowledge-mcp-prod"
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$registry"
+          docker build -t "$registry/$repo:indexer-${{ github.sha }}" -f indexer/Dockerfile .
+          docker push "$registry/$repo:indexer-${{ github.sha }}"
+          docker build -t "$registry/$repo:mcp-server-${{ github.sha }}" -f mcp_server/Dockerfile .
+          docker push "$registry/$repo:mcp-server-${{ github.sha }}"
+
       - name: Deploy CDK stack
         working-directory: infrastructure/cdk
         run: cdk deploy --require-approval never --outputs-file outputs.json
@@ -121,6 +133,8 @@ jobs:
           ENVIRONMENT: prod
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           GITHUB_REPO: ${{ github.repository }}
+          INDEXER_IMAGE_TAG: indexer-${{ github.sha }}
+          MCP_SERVER_IMAGE_TAG: mcp-server-${{ github.sha }}
 
       - name: Show deployed endpoints
         working-directory: infrastructure/cdk
