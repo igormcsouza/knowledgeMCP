@@ -9,7 +9,7 @@ from aws_cdk import (
     aws_iam,
     aws_lambda,
     aws_logs,
-    aws_secretsmanager,
+    aws_ssm,
 )
 from constructs import Construct
 
@@ -42,21 +42,21 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table = self._create_content_index_table()
         usage_table = self._create_usage_tracking_table()
         indexer_state_table = self._create_indexer_state_table()
-        webhook_secret = self._create_webhook_secret()
-        github_token_secret = self._create_github_token_secret()
+        webhook_param = self._create_webhook_param()
+        github_token_param = self._create_github_token_param()
 
         indexer_function = self._create_indexer_function(
             content_table,
             usage_table,
             indexer_state_table,
-            webhook_secret,
-            github_token_secret,
+            webhook_param,
+            github_token_param,
         )
         self._create_indexer_schedule(indexer_function)
         self._create_indexer_function_url(indexer_function)
 
         mcp_function = self._create_mcp_server_function(
-            content_table, usage_table, github_token_secret
+            content_table, usage_table, github_token_param
         )
         self._create_function_url(mcp_function)
 
@@ -171,34 +171,36 @@ class KnowledgeMcpStack(cdk.Stack):
         cdk.Tags.of(table).add("Application", "knowledge-mcp")
         return table
 
-    def _create_webhook_secret(self) -> aws_secretsmanager.Secret:
+    def _create_webhook_param(self) -> aws_ssm.StringParameter:
         # HMAC secret shared with the GitHub webhook config, used to verify
         # X-Hub-Signature-256 on incoming push events (PLAN.md 1.4).
-        return aws_secretsmanager.Secret(
+        # CloudFormation can't create a SecureString SSM parameter, so this
+        # is created as a String placeholder and the real value is set
+        # out-of-band via `aws ssm put-parameter --type SecureString
+        # --overwrite` (never committed to source; issue #3).
+        return aws_ssm.StringParameter(
             self,
-            "GithubWebhookSecret",
-            secret_name=f"knowledge-mcp-{self.environment_name}-github-webhook-secret",
-            generate_secret_string=aws_secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True,
-                password_length=40,
-            ),
+            "GithubWebhookParam",
+            parameter_name=f"/knowledge-mcp/{self.environment_name}/github-webhook-secret",
+            tier=aws_ssm.ParameterTier.STANDARD,
+            string_value="placeholder-rotate-me",
         )
 
-    def _create_github_token_secret(self) -> aws_secretsmanager.Secret:
+    def _create_github_token_param(self) -> aws_ssm.StringParameter:
         # Personal access token for the GitHub REST API. Unauthenticated
         # access is capped at 60 req/hour and shared across every AWS Lambda
         # customer on the same egress IP pool — a full index run exhausts
         # that near-instantly. Authenticated access gets 5000/hour. Created
         # with a placeholder value; the real token is set out-of-band via
-        # `aws secretsmanager put-secret-value` (never committed to source).
-        return aws_secretsmanager.Secret(
+        # `aws ssm put-parameter --type SecureString --overwrite` (never
+        # committed to source; CloudFormation can't create SecureString
+        # params directly, see issue #3).
+        return aws_ssm.StringParameter(
             self,
-            "GithubTokenSecret",
-            secret_name=f"knowledge-mcp-{self.environment_name}-github-token",
-            generate_secret_string=aws_secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True,
-                password_length=40,
-            ),
+            "GithubTokenParam",
+            parameter_name=f"/knowledge-mcp/{self.environment_name}/github-token",
+            tier=aws_ssm.ParameterTier.STANDARD,
+            string_value="placeholder-rotate-me",
         )
 
     def _create_indexer_function(
@@ -206,8 +208,8 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
         indexer_state_table: aws_dynamodb.Table,
-        webhook_secret: aws_secretsmanager.Secret,
-        github_token_secret: aws_secretsmanager.Secret,
+        webhook_param: aws_ssm.StringParameter,
+        github_token_param: aws_ssm.StringParameter,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -219,8 +221,8 @@ class KnowledgeMcpStack(cdk.Stack):
         content_table.grant_read_write_data(role)
         usage_table.grant_read_write_data(role)
         indexer_state_table.grant_read_write_data(role)
-        webhook_secret.grant_read(role)
-        github_token_secret.grant_read(role)
+        webhook_param.grant_read(role)
+        github_token_param.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -255,8 +257,8 @@ class KnowledgeMcpStack(cdk.Stack):
             environment={
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
-                "GITHUB_WEBHOOK_SECRET_ARN": webhook_secret.secret_arn,
-                "GITHUB_TOKEN_SECRET_ARN": github_token_secret.secret_arn,
+                "GITHUB_WEBHOOK_SECRET_PARAM": webhook_param.parameter_name,
+                "GITHUB_TOKEN_SECRET_PARAM": github_token_param.parameter_name,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.
@@ -301,7 +303,7 @@ class KnowledgeMcpStack(cdk.Stack):
         self,
         content_table: aws_dynamodb.Table,
         usage_table: aws_dynamodb.Table,
-        github_token_secret: aws_secretsmanager.Secret,
+        github_token_param: aws_ssm.StringParameter,
     ) -> aws_lambda.Function:
         repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
 
@@ -315,7 +317,7 @@ class KnowledgeMcpStack(cdk.Stack):
         usage_table.grant_read_write_data(role)
         # get_article_history / list_related_concepts's edit-count fallback
         # call the GitHub API directly (PLAN.md 3.9).
-        github_token_secret.grant_read(role)
+        github_token_param.grant_read(role)
         role.add_managed_policy(
             aws_iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole"
@@ -347,7 +349,7 @@ class KnowledgeMcpStack(cdk.Stack):
             environment={
                 "ENVIRONMENT": self.environment_name,
                 "LOG_LEVEL": "INFO" if self.environment_name == "prod" else "DEBUG",
-                "GITHUB_TOKEN_SECRET_ARN": github_token_secret.secret_arn,
+                "GITHUB_TOKEN_SECRET_PARAM": github_token_param.parameter_name,
                 # fastembed's HF download accelerator (hf_xet) writes its own
                 # cache/log under $HOME/.cache regardless of the cache_dir we
                 # pass explicitly — only /tmp is writable in Lambda.

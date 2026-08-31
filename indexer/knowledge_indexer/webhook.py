@@ -43,19 +43,19 @@ _cached_webhook_secret: str | None = None
 
 
 def get_webhook_secret() -> str | None:
-    """Fetch the HMAC secret from Secrets Manager, cached across warm
-    invocations. Returns None (skip verification) only when no ARN is
+    """Fetch the HMAC secret from SSM Parameter Store, cached across warm
+    invocations. Returns None (skip verification) only when no param name is
     configured, e.g. local/test runs."""
     global _cached_webhook_secret
     if _cached_webhook_secret is not None:
         return _cached_webhook_secret
 
-    secret_arn = os.environ.get("GITHUB_WEBHOOK_SECRET_ARN")
-    if not secret_arn:
+    param_name = os.environ.get("GITHUB_WEBHOOK_SECRET_PARAM")
+    if not param_name:
         return None
 
-    client = boto3.client("secretsmanager")
-    _cached_webhook_secret = client.get_secret_value(SecretId=secret_arn)[
-        "SecretString"
-    ]
+    client = boto3.client("ssm")
+    _cached_webhook_secret = client.get_parameter(Name=param_name, WithDecryption=True)[
+        "Parameter"
+    ]["Value"]
     return _cached_webhook_secret
