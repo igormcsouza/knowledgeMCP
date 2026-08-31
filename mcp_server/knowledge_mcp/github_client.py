@@ -8,19 +8,21 @@ _cached_client: Github | None = None
 
 
 def _get_token() -> str | None:
-    """GitHub token from Secrets Manager, cached across warm invocations —
+    """GitHub token from SSM Parameter Store, cached across warm invocations —
     see indexer/knowledge_indexer/github_client.py for why unauthenticated
     access isn't good enough."""
     global _cached_token
     if _cached_token is not None:
         return _cached_token
 
-    secret_arn = os.environ.get("GITHUB_TOKEN_SECRET_ARN")
-    if not secret_arn:
+    param_name = os.environ.get("GITHUB_TOKEN_SECRET_PARAM")
+    if not param_name:
         return None
 
-    client = boto3.client("secretsmanager")
-    _cached_token = client.get_secret_value(SecretId=secret_arn)["SecretString"]
+    client = boto3.client("ssm")
+    _cached_token = client.get_parameter(Name=param_name, WithDecryption=True)[
+        "Parameter"
+    ]["Value"]
     return _cached_token
 
 
