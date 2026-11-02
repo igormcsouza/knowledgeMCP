@@ -18,4 +18,6 @@ stack = KnowledgeMcpStack(
     environment_name=environment_name,
 )
 
+cdk.Tags.of(app).add("project", "knowledge-mcp")
+
 app.synth()
